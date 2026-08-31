@@ -2,35 +2,55 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>OSINT Dashboard — Standalone Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OSINT Dashboard — Preview</title>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
-<style>body{background:#0a0a0a}</style>
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    body { background: white !important; color: black !important; }
+  }
+</style>
 </head>
-<body>
+<body class="transition-colors duration-300">
 <div id="root"></div>
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useMemo, useRef } = React;
 
 const CATEGORY_OPTIONS = ["social","dating","photo","coding","finance","gaming","adult","forum"];
 const COUNTRY_OPTIONS = ["us","ru","de","fr","br","in","jp","global"];
-const STATUS_COLOR = { found:"bg-emerald-500", not_found:"bg-neutral-700", blocked:"bg-amber-500", error:"bg-red-500", pending:"bg-neutral-800 animate-pulse" };
+
+const MOCK_BIOS = [
+  "Frequent poster, joined 2021, profile photo matches other accounts.",
+  "Bio mentions Palm Harbor, FL. Linked website in profile.",
+  "No bio. Avatar reused across 3 other found accounts.",
+  "Verified badge. Last active recently. Public follower count high.",
+  "Private account. Username pattern matches recursive lead."
+];
 
 function generateMockSites(n){
   const statuses=["found","not_found","blocked","error","pending"];
   return Array.from({length:n},(_,i)=>({
+    id:i,
     name:`site-${i+1}.com`,
     status: statuses[Math.floor(Math.random()*(i<n*0.6?2:5))],
     category: CATEGORY_OPTIONS[i%CATEGORY_OPTIONS.length],
     country: COUNTRY_OPTIONS[i%COUNTRY_OPTIONS.length],
-    risk: ["low","medium","high"][i%3]
+    risk: ["low","medium","high"][i%3],
+    bio: MOCK_BIOS[i % MOCK_BIOS.length],
+    joined: `20${18+(i%7)}-0${1+(i%9)}-1${i%9}`,
+    avatarSeed: i % 40
   }));
 }
 
-function ProgressRing({checked,total,found,size=120,stroke=10}){
+const STATUS_COLOR = { found:"bg-emerald-500", not_found:"bg-neutral-700", blocked:"bg-amber-500", error:"bg-red-500", pending:"bg-neutral-800 animate-pulse" };
+const RISK_BADGE = { low:"bg-emerald-500/20 text-emerald-400", medium:"bg-amber-500/20 text-amber-400", high:"bg-red-500/20 text-red-400" };
+
+function ProgressRing({checked,total,found,size=120,stroke=10,dark}){
   const [p,setP]=useState(0);
   const pct = total>0? Math.min(checked/total,1):0;
   const hit = checked>0? Math.min(found/checked,1):0;
@@ -40,23 +60,23 @@ function ProgressRing({checked,total,found,size=120,stroke=10}){
   return (
     <div className="relative flex items-center justify-center" style={{width:size,height:size}}>
       <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
-        <circle cx={size/2} cy={size/2} r={radius} stroke="#27272a" strokeWidth={stroke} fill="none"/>
+        <circle cx={size/2} cy={size/2} r={radius} stroke={dark?"#27272a":"#e5e5e5"} strokeWidth={stroke} fill="none"/>
         <circle cx={size/2} cy={size/2} r={radius} stroke="#6366f1" strokeWidth={stroke} fill="none" strokeLinecap="round"
           strokeDasharray={circ} strokeDashoffset={circ*(1-p)} style={{transition:"stroke-dashoffset .6s ease"}}/>
-        <circle cx={size/2} cy={size/2} r={innerR} stroke="#1c1917" strokeWidth={stroke-4} fill="none"/>
+        <circle cx={size/2} cy={size/2} r={innerR} stroke={dark?"#1c1917":"#f5f5f5"} strokeWidth={stroke-4} fill="none"/>
         <circle cx={size/2} cy={size/2} r={innerR} stroke="#22c55e" strokeWidth={stroke-4} fill="none" strokeLinecap="round"
           strokeDasharray={innerCirc} strokeDashoffset={innerCirc*(1-hit)} style={{transition:"stroke-dashoffset .6s ease"}}/>
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-lg font-bold text-neutral-100">{Math.round(pct*100)}%</span>
+        <span className={`text-lg font-bold ${dark?"text-neutral-100":"text-neutral-900"}`}>{Math.round(pct*100)}%</span>
         <span className="text-[10px] text-neutral-400">{checked}/{total}</span>
-        <span className="text-[10px] text-emerald-400">{found} found</span>
+        <span className="text-[10px] text-emerald-500">{found} found</span>
       </div>
     </div>
   );
 }
 
-function NetworkGraph({nodes,links,height=380}){
+function NetworkGraph({nodes,links,height=380,onNodeClick,dark}){
   const ref=useRef(null), wrap=useRef(null);
   useEffect(()=>{
     const width = wrap.current.clientWidth;
@@ -71,32 +91,60 @@ function NetworkGraph({nodes,links,height=380}){
       .force("center", d3.forceCenter(width/2, height/2))
       .force("collide", d3.forceCollide(28));
     const link = zl.append("g").selectAll("line").data(links).join("line")
-      .attr("stroke","#334155").attr("stroke-width",1.5).attr("stroke-opacity",0.7);
+      .attr("stroke",dark?"#334155":"#cbd5e1").attr("stroke-width",1.5).attr("stroke-opacity",0.7);
     const colorType = {root:"#818cf8",account:"#38bdf8",lead:"#e879f9",email:"#facc15",id:"#94a3b8"};
     const colorRisk = {low:"#22c55e",medium:"#f59e0b",high:"#ef4444"};
     const node = zl.append("g").selectAll("g").data(nodes).join("g").style("cursor","pointer")
       .call(d3.drag()
         .on("start",(e,d)=>{d.fx=d.x;d.fy=d.y;})
         .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;})
-        .on("end",(e,d)=>{d.fx=null;d.fy=null;}));
+        .on("end",(e,d)=>{d.fx=null;d.fy=null;}))
+      .on("click",(e,d)=>onNodeClick && onNodeClick(d));
     node.append("circle").attr("r",d=>d.type==="root"?22:14)
       .attr("fill",d=>colorType[d.type]||"#64748b")
       .attr("stroke",d=>colorRisk[d.risk]||"#1e293b").attr("stroke-width",3);
     node.append("text").text(d=>d.label).attr("dy",26).attr("text-anchor","middle")
-      .attr("fill","#e2e8f0").attr("font-size",11);
+      .attr("fill",dark?"#e2e8f0":"#1e293b").attr("font-size",11);
     sim.on("tick",()=>{
       link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
       node.attr("transform",d=>`translate(${d.x},${d.y})`);
     });
     return ()=>sim.stop();
-  },[nodes,links,height]);
-  return <div ref={wrap} className="w-full"><svg ref={ref} className="w-full rounded-xl bg-neutral-950/60"/></div>;
+  },[nodes,links,height,dark]);
+  return <div ref={wrap} className="w-full"><svg ref={ref} className={`w-full rounded-xl ${dark?"bg-neutral-950/60":"bg-neutral-100"}`}/></div>;
+}
+
+function DossierModal({site, onClose, dark}){
+  if(!site) return null;
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 no-print" onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} className={`rounded-2xl p-6 max-w-md w-full mx-4 ${dark?"bg-neutral-900 text-neutral-100":"bg-white text-neutral-900"}`}>
+        <div className="flex items-center gap-3 mb-3">
+          <img src={`https://api.dicebear.com/7.x/identicon/svg?seed=${site.avatarSeed}`} className="w-14 h-14 rounded-full bg-neutral-700" />
+          <div>
+            <h3 className="font-semibold">{site.name}</h3>
+            <span className={`text-[11px] px-2 py-0.5 rounded-full capitalize ${RISK_BADGE[site.risk]}`}>{site.risk} risk</span>
+          </div>
+        </div>
+        <dl className="text-sm space-y-1">
+          <div className="flex justify-between"><dt className="text-neutral-400">Category</dt><dd className="capitalize">{site.category}</dd></div>
+          <div className="flex justify-between"><dt className="text-neutral-400">Country</dt><dd className="uppercase">{site.country}</dd></div>
+          <div className="flex justify-between"><dt className="text-neutral-400">Joined</dt><dd>{site.joined}</dd></div>
+          <div className="flex justify-between"><dt className="text-neutral-400">Status</dt><dd className="capitalize">{site.status.replace("_"," ")}</dd></div>
+        </dl>
+        <p className="text-sm text-neutral-400 mt-3 leading-snug">{site.bio}</p>
+        <button onClick={onClose} className="mt-4 w-full bg-indigo-600 rounded-lg py-2 text-sm">Close</button>
+      </div>
+    </div>
+  );
 }
 
 function App(){
   const [sites] = useState(()=>generateMockSites(600));
   const [activeCat,setActiveCat]=useState([]);
   const [activeCountry,setActiveCountry]=useState([]);
+  const [dark,setDark]=useState(true);
+  const [selectedSite,setSelectedSite]=useState(null);
 
   const filtered = useMemo(()=>sites.filter(s=>
     (activeCat.length===0||activeCat.includes(s.category)) &&
@@ -106,6 +154,12 @@ function App(){
   const stats = useMemo(()=>{
     const b={found:0,blocked:0,error:0,pending:0,not_found:0};
     filtered.forEach(s=>b[s.status]++); return b;
+  },[filtered]);
+
+  const categoryFound = useMemo(()=>{
+    const map={};
+    filtered.filter(s=>s.status==="found").forEach(s=>map[s.category]=(map[s.category]||0)+1);
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]);
   },[filtered]);
 
   const toggle=(list,setList,val)=> setList(list.includes(val)? list.filter(v=>v!==val): [...list,val]);
@@ -124,57 +178,106 @@ function App(){
     {source:"email1",target:"dating1"}
   ];
 
+  const bg = dark ? "bg-neutral-950 text-neutral-100" : "bg-neutral-50 text-neutral-900";
+  const card = dark ? "bg-neutral-900" : "bg-white border border-neutral-200";
+
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 p-6 space-y-6">
+    <div className={`min-h-screen ${bg} p-6 space-y-6 transition-colors`}>
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">OSINT Profile Dossier — Demo</h1>
-          <p className="text-sm text-neutral-400">Standalone preview, mock data, {sites.length} sites</p>
+          <h1 className="text-2xl font-bold">OSINT Profile Dossier</h1>
+          <p className="text-sm text-neutral-400">Interactive preview · {sites.length} indexed sites (mock data)</p>
         </div>
-        <ProgressRing checked={filtered.length-stats.pending} total={filtered.length} found={stats.found}/>
+        <div className="flex items-center gap-4 no-print">
+          <button onClick={()=>setDark(!dark)} className={`text-xs px-3 py-1.5 rounded-full border ${dark?"border-neutral-700":"border-neutral-300"}`}>
+            {dark ? "\u2600\uFE0F Light mode" : "\uD83C\uDF19 Dark mode"}
+          </button>
+          <button onClick={()=>window.print()} className="text-xs px-3 py-1.5 rounded-full bg-indigo-600 text-white">
+            \uD83D\uDCC4 Export report
+          </button>
+          <ProgressRing checked={filtered.length-stats.pending} total={filtered.length} found={stats.found} dark={dark}/>
+        </div>
       </header>
 
-      <section className="bg-neutral-900 rounded-2xl p-4 space-y-3">
+      <section className={`${card} rounded-2xl p-4 space-y-3 no-print`}>
         <div className="text-sm text-neutral-400">Category</div>
         <div className="flex flex-wrap gap-2">
           {CATEGORY_OPTIONS.map(c=>(
             <button key={c} onClick={()=>toggle(activeCat,setActiveCat,c)}
-              className={`text-xs px-3 py-1 rounded-full border capitalize ${activeCat.includes(c)?"bg-indigo-600 border-indigo-500":"border-neutral-700 hover:bg-neutral-800"}`}>{c}</button>
+              className={`text-xs px-3 py-1 rounded-full border capitalize ${activeCat.includes(c)?"bg-indigo-600 border-indigo-500 text-white":dark?"border-neutral-700 hover:bg-neutral-800":"border-neutral-300 hover:bg-neutral-100"}`}>{c}</button>
           ))}
         </div>
         <div className="text-sm text-neutral-400 pt-2">Country</div>
         <div className="flex flex-wrap gap-2">
           {COUNTRY_OPTIONS.map(c=>(
             <button key={c} onClick={()=>toggle(activeCountry,setActiveCountry,c)}
-              className={`text-xs px-3 py-1 rounded-full border uppercase ${activeCountry.includes(c)?"bg-cyan-600 border-cyan-500":"border-neutral-700 hover:bg-neutral-800"}`}>{c}</button>
+              className={`text-xs px-3 py-1 rounded-full border uppercase ${activeCountry.includes(c)?"bg-cyan-600 border-cyan-500 text-white":dark?"border-neutral-700 hover:bg-neutral-800":"border-neutral-300 hover:bg-neutral-100"}`}>{c}</button>
           ))}
         </div>
       </section>
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[["Found",stats.found,"text-emerald-400"],["Blocked",stats.blocked,"text-amber-400"],["Errors",stats.error,"text-red-400"],["Pending",stats.pending,"text-neutral-400"]].map(([label,val,cls])=>(
-          <div key={label} className="bg-neutral-900 rounded-2xl p-4">
+        {[["Found",stats.found,"text-emerald-500"],["Blocked",stats.blocked,"text-amber-500"],["Errors",stats.error,"text-red-500"],["Pending",stats.pending,"text-neutral-400"]].map(([label,val,cls])=>(
+          <div key={label} className={`${card} rounded-2xl p-4`}>
             <div className={`text-xs ${cls}`}>{label}</div>
             <div className="text-lg font-semibold">{val}</div>
           </div>
         ))}
       </section>
 
-      <section className="bg-neutral-900 rounded-2xl p-4">
-        <h2 className="font-medium mb-2">Linked Account Network</h2>
-        <NetworkGraph nodes={nodes} links={links}/>
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className={`${card} rounded-2xl p-4`}>
+          <h2 className="font-medium mb-3">Account Types Found</h2>
+          <div className="space-y-2">
+            {categoryFound.map(([cat,count])=>(
+              <div key={cat} className="flex items-center gap-2">
+                <span className="text-xs w-16 capitalize text-neutral-400">{cat}</span>
+                <div className="flex-1 bg-neutral-800/40 rounded-full h-3 overflow-hidden">
+                  <div className="h-3 bg-indigo-500 rounded-full" style={{width:`${Math.min(count*8,100)}%`}}></div>
+                </div>
+                <span className="text-xs w-6 text-right">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className={`${card} rounded-2xl p-4`}>
+          <h2 className="font-medium mb-3">Risk Tag Summary</h2>
+          <div className="flex justify-around items-center h-full pb-6">
+            {["low","medium","high"].map(risk=>{
+              const count = filtered.filter(s=>s.status==="found" && s.risk===risk).length;
+              return (
+                <div key={risk} className="text-center">
+                  <div className={`text-3xl font-bold ${risk==="high"?"text-red-500":risk==="medium"?"text-amber-500":"text-emerald-500"}`}>{count}</div>
+                  <div className={`text-[11px] px-2 py-0.5 rounded-full capitalize mt-1 ${RISK_BADGE[risk]}`}>{risk}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </section>
 
-      <section className="bg-neutral-900 rounded-2xl p-4">
-        <h2 className="font-medium mb-2">Site Status Grid ({filtered.length} sites)</h2>
+      <section className={`${card} rounded-2xl p-4`}>
+        <h2 className="font-medium mb-2">Linked Account Network <span className="text-xs text-neutral-400 no-print">(click a node for details)</span></h2>
+        <NetworkGraph nodes={nodes} links={links} dark={dark} onNodeClick={(n)=>{
+          const match = sites.find(s=>s.name.includes("site-1")) || sites[0];
+          setSelectedSite({...match, name:n.label, risk:n.risk||"low"});
+        }}/>
+      </section>
+
+      <section className={`${card} rounded-2xl p-4`}>
+        <h2 className="font-medium mb-2">Site Status Grid <span className="text-xs text-neutral-400 no-print">({filtered.length} sites · click for dossier)</span></h2>
         <div className="grid grid-cols-6 md:grid-cols-10 gap-1.5 max-h-96 overflow-y-auto">
           {filtered.slice(0,600).map((s,i)=>(
-            <div key={i} className={`rounded-md p-1.5 text-[9px] text-white ${STATUS_COLOR[s.status]}`}>
+            <div key={i} onClick={()=>s.status==="found" && setSelectedSite(s)}
+              className={`rounded-md p-1.5 text-[9px] text-white cursor-pointer ${STATUS_COLOR[s.status]}`}>
               <div className="truncate">{s.name}</div>
             </div>
           ))}
         </div>
       </section>
+
+      <DossierModal site={selectedSite} onClose={()=>setSelectedSite(null)} dark={dark}/>
     </div>
   );
 }
