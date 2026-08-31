@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>OSINT Dashboard — Standalone Demo</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>body{background:#0a0a0a}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useMemo, useRef } = React;
+
+const CATEGORY_OPTIONS = ["social","dating","photo","coding","finance","gaming","adult","forum"];
+const COUNTRY_OPTIONS = ["us","ru","de","fr","br","in","jp","global"];
+const STATUS_COLOR = { found:"bg-emerald-500", not_found:"bg-neutral-700", blocked:"bg-amber-500", error:"bg-red-500", pending:"bg-neutral-800 animate-pulse" };
+
+function generateMockSites(n){
+  const statuses=["found","not_found","blocked","error","pending"];
+  return Array.from({length:n},(_,i)=>({
+    name:`site-${i+1}.com`,
+    status: statuses[Math.floor(Math.random()*(i<n*0.6?2:5))],
+    category: CATEGORY_OPTIONS[i%CATEGORY_OPTIONS.length],
+    country: COUNTRY_OPTIONS[i%COUNTRY_OPTIONS.length],
+    risk: ["low","medium","high"][i%3]
+  }));
+}
+
+function ProgressRing({checked,total,found,size=120,stroke=10}){
+  const [p,setP]=useState(0);
+  const pct = total>0? Math.min(checked/total,1):0;
+  const hit = checked>0? Math.min(found/checked,1):0;
+  useEffect(()=>{ const r=requestAnimationFrame(()=>setP(pct)); return ()=>cancelAnimationFrame(r);},[pct]);
+  const radius=size/2-stroke, circ=2*Math.PI*radius;
+  const innerR=radius-stroke-4, innerCirc=2*Math.PI*innerR;
+  return (
+    <div className="relative flex items-center justify-center" style={{width:size,height:size}}>
+      <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+        <circle cx={size/2} cy={size/2} r={radius} stroke="#27272a" strokeWidth={stroke} fill="none"/>
+        <circle cx={size/2} cy={size/2} r={radius} stroke="#6366f1" strokeWidth={stroke} fill="none" strokeLinecap="round"
+          strokeDasharray={circ} strokeDashoffset={circ*(1-p)} style={{transition:"stroke-dashoffset .6s ease"}}/>
+        <circle cx={size/2} cy={size/2} r={innerR} stroke="#1c1917" strokeWidth={stroke-4} fill="none"/>
+        <circle cx={size/2} cy={size/2} r={innerR} stroke="#22c55e" strokeWidth={stroke-4} fill="none" strokeLinecap="round"
+          strokeDasharray={innerCirc} strokeDashoffset={innerCirc*(1-hit)} style={{transition:"stroke-dashoffset .6s ease"}}/>
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-lg font-bold text-neutral-100">{Math.round(pct*100)}%</span>
+        <span className="text-[10px] text-neutral-400">{checked}/{total}</span>
+        <span className="text-[10px] text-emerald-400">{found} found</span>
+      </div>
+    </div>
+  );
+}
+
+function NetworkGraph({nodes,links,height=380}){
+  const ref=useRef(null), wrap=useRef(null);
+  useEffect(()=>{
+    const width = wrap.current.clientWidth;
+    const svg = d3.select(ref.current);
+    svg.selectAll("*").remove();
+    svg.attr("viewBox",`0 0 ${width} ${height}`);
+    const zl = svg.append("g");
+    svg.call(d3.zoom().scaleExtent([0.4,3]).on("zoom",e=>zl.attr("transform",e.transform)));
+    const sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d=>d.id).distance(90))
+      .force("charge", d3.forceManyBody().strength(-220))
+      .force("center", d3.forceCenter(width/2, height/2))
+      .force("collide", d3.forceCollide(28));
+    const link = zl.append("g").selectAll("line").data(links).join("line")
+      .attr("stroke","#334155").attr("stroke-width",1.5).attr("stroke-opacity",0.7);
+    const colorType = {root:"#818cf8",account:"#38bdf8",lead:"#e879f9",email:"#facc15",id:"#94a3b8"};
+    const colorRisk = {low:"#22c55e",medium:"#f59e0b",high:"#ef4444"};
+    const node = zl.append("g").selectAll("g").data(nodes).join("g").style("cursor","pointer")
+      .call(d3.drag()
+        .on("start",(e,d)=>{d.fx=d.x;d.fy=d.y;})
+        .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;})
+        .on("end",(e,d)=>{d.fx=null;d.fy=null;}));
+    node.append("circle").attr("r",d=>d.type==="root"?22:14)
+      .attr("fill",d=>colorType[d.type]||"#64748b")
+      .attr("stroke",d=>colorRisk[d.risk]||"#1e293b").attr("stroke-width",3);
+    node.append("text").text(d=>d.label).attr("dy",26).attr("text-anchor","middle")
+      .attr("fill","#e2e8f0").attr("font-size",11);
+    sim.on("tick",()=>{
+      link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+      node.attr("transform",d=>`translate(${d.x},${d.y})`);
+    });
+    return ()=>sim.stop();
+  },[nodes,links,height]);
+  return <div ref={wrap} className="w-full"><svg ref={ref} className="w-full rounded-xl bg-neutral-950/60"/></div>;
+}
+
+function App(){
+  const [sites] = useState(()=>generateMockSites(600));
+  const [activeCat,setActiveCat]=useState([]);
+  const [activeCountry,setActiveCountry]=useState([]);
+
+  const filtered = useMemo(()=>sites.filter(s=>
+    (activeCat.length===0||activeCat.includes(s.category)) &&
+    (activeCountry.length===0||activeCountry.includes(s.country))
+  ),[sites,activeCat,activeCountry]);
+
+  const stats = useMemo(()=>{
+    const b={found:0,blocked:0,error:0,pending:0,not_found:0};
+    filtered.forEach(s=>b[s.status]++); return b;
+  },[filtered]);
+
+  const toggle=(list,setList,val)=> setList(list.includes(val)? list.filter(v=>v!==val): [...list,val]);
+
+  const nodes=[
+    {id:"root",label:"chad_w",type:"root"},
+    {id:"gh",label:"github/chadw",type:"account",risk:"low"},
+    {id:"insta",label:"insta/chad.w",type:"account",risk:"medium"},
+    {id:"lead1",label:"chadw92",type:"lead",risk:"low"},
+    {id:"email1",label:"c***@proton.me",type:"email",risk:"medium"},
+    {id:"dating1",label:"pof/chadw",type:"account",risk:"high"}
+  ];
+  const links=[
+    {source:"root",target:"gh"},{source:"root",target:"insta"},
+    {source:"insta",target:"lead1"},{source:"lead1",target:"email1"},
+    {source:"email1",target:"dating1"}
+  ];
+
+  return (
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 p-6 space-y-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">OSINT Profile Dossier — Demo</h1>
+          <p className="text-sm text-neutral-400">Standalone preview, mock data, {sites.length} sites</p>
+        </div>
+        <ProgressRing checked={filtered.length-stats.pending} total={filtered.length} found={stats.found}/>
+      </header>
+
+      <section className="bg-neutral-900 rounded-2xl p-4 space-y-3">
+        <div className="text-sm text-neutral-400">Category</div>
+        <div className="flex flex-wrap gap-2">
+          {CATEGORY_OPTIONS.map(c=>(
+            <button key={c} onClick={()=>toggle(activeCat,setActiveCat,c)}
+              className={`text-xs px-3 py-1 rounded-full border capitalize ${activeCat.includes(c)?"bg-indigo-600 border-indigo-500":"border-neutral-700 hover:bg-neutral-800"}`}>{c}</button>
+          ))}
+        </div>
+        <div className="text-sm text-neutral-400 pt-2">Country</div>
+        <div className="flex flex-wrap gap-2">
+          {COUNTRY_OPTIONS.map(c=>(
+            <button key={c} onClick={()=>toggle(activeCountry,setActiveCountry,c)}
+              className={`text-xs px-3 py-1 rounded-full border uppercase ${activeCountry.includes(c)?"bg-cyan-600 border-cyan-500":"border-neutral-700 hover:bg-neutral-800"}`}>{c}</button>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[["Found",stats.found,"text-emerald-400"],["Blocked",stats.blocked,"text-amber-400"],["Errors",stats.error,"text-red-400"],["Pending",stats.pending,"text-neutral-400"]].map(([label,val,cls])=>(
+          <div key={label} className="bg-neutral-900 rounded-2xl p-4">
+            <div className={`text-xs ${cls}`}>{label}</div>
+            <div className="text-lg font-semibold">{val}</div>
+          </div>
+        ))}
+      </section>
+
+      <section className="bg-neutral-900 rounded-2xl p-4">
+        <h2 className="font-medium mb-2">Linked Account Network</h2>
+        <NetworkGraph nodes={nodes} links={links}/>
+      </section>
+
+      <section className="bg-neutral-900 rounded-2xl p-4">
+        <h2 className="font-medium mb-2">Site Status Grid ({filtered.length} sites)</h2>
+        <div className="grid grid-cols-6 md:grid-cols-10 gap-1.5 max-h-96 overflow-y-auto">
+          {filtered.slice(0,600).map((s,i)=>(
+            <div key={i} className={`rounded-md p-1.5 text-[9px] text-white ${STATUS_COLOR[s.status]}`}>
+              <div className="truncate">{s.name}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
