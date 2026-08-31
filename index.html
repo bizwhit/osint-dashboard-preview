@@ -190,10 +190,10 @@ function App(){
         </div>
         <div className="flex items-center gap-4 no-print">
           <button onClick={()=>setDark(!dark)} className={`text-xs px-3 py-1.5 rounded-full border ${dark?"border-neutral-700":"border-neutral-300"}`}>
-            {dark ? "\u2600\uFE0F Light mode" : "\uD83C\uDF19 Dark mode"}
+            {dark ? "☀️ Light mode" : "🌙 Dark mode"}
           </button>
           <button onClick={()=>window.print()} className="text-xs px-3 py-1.5 rounded-full bg-indigo-600 text-white">
-            \uD83D\uDCC4 Export report
+            📄 Export report
           </button>
           <ProgressRing checked={filtered.length-stats.pending} total={filtered.length} found={stats.found} dark={dark}/>
         </div>
