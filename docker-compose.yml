@@ -1,0 +1,26 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  spiderfoot:
+    image: spiderfoot/spiderfoot:latest
+    command: ["-l", "0.0.0.0:5001"]
+    ports: ["5001:5001"]
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SPIDERFOOT_URL: http://spiderfoot:5001
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+    depends_on: [redis, spiderfoot]
+  worker:
+    build: ./backend
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SPIDERFOOT_URL: http://spiderfoot:5001
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+    depends_on: [redis, spiderfoot]
