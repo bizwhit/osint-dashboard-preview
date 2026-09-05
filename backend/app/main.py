@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Literal, Optional, List
 import asyncio
+import json
 import uuid
 import redis.asyncio as aioredis
 from app.config import settings
@@ -30,7 +31,8 @@ class SearchRequest(BaseModel):
 
 
 def require_db():
-    if not supabase_client: raise HTTPException(status_code=503, detail="Supabase is not configured.")
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase is not configured.")
 
 
 def request_ip(request: Request) -> str:
@@ -38,30 +40,38 @@ def request_ip(request: Request) -> str:
 
 
 @app.get("/health")
-async def health(): return {"status": "ok", "service": "osint-api"}
+async def health():
+    return {"status": "ok", "service": "osint-api"}
 
 
 @app.get("/api/tools")
 async def list_tools(input_type: Optional[str] = Query(None)):
-    if input_type and input_type not in {"username", "email", "phone", "domain"}: raise HTTPException(status_code=400, detail="Unsupported input type.")
+    if input_type and input_type not in {"username", "email", "phone", "domain"}:
+        raise HTTPException(status_code=400, detail="Unsupported input type.")
     return [tool.__dict__ for tool in (tools_for_input_type(input_type) if input_type else list(TOOLS.values()))]
 
 
 @app.get("/api/tools/health", dependencies=[Depends(require_admin)])
-async def tool_health(): return await all_tool_health()
+async def tool_health():
+    return await all_tool_health()
 
 
 @app.post("/api/search")
 async def create_search(body: SearchRequest, request: Request):
-    require_db(); ip = request_ip(request)
+    require_db()
+    ip = request_ip(request)
     if not body.consent_accepted:
         log_action("search_rejected_no_consent", input_type=body.input_type, query=body.query, client_ip=ip)
         raise HTTPException(status_code=403, detail="Authorized-use consent is required.")
-    try: selected = validate_selected_tools(body.input_type, body.selected_tools)
-    except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc))
-    if not selected: raise HTTPException(status_code=400, detail="Select at least one tool.")
+    try:
+        selected = validate_selected_tools(body.input_type, body.selected_tools)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not selected:
+        raise HTTPException(status_code=400, detail="Select at least one tool.")
     investigation_id = body.investigation_id or str(uuid.uuid4())
-    try: enforce_investigation(investigation_id)
+    try:
+        enforce_investigation(investigation_id)
     except RateLimitExceeded as exc:
         log_action("search_rate_limited", investigation_id=investigation_id, input_type=body.input_type, query=body.query, client_ip=ip, metadata={"retry_after": exc.retry_after})
         raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": str(exc.retry_after)})
@@ -80,34 +90,44 @@ async def create_search(body: SearchRequest, request: Request):
 
 @app.get("/api/case/{case_id}")
 async def get_case(case_id: str):
-    require_db(); rows = supabase_client.table("cases").select("*").eq("id", case_id).execute().data
+    require_db()
+    rows = supabase_client.table("cases").select("*").eq("id", case_id).execute().data
     if not rows: raise HTTPException(status_code=404, detail="Case not found.")
-    return {**rows[0], "results": supabase_client.table("search_results").select("*").eq("case_id", case_id).execute().data}
+    results = supabase_client.table("search_results").select("*").eq("case_id", case_id).execute().data
+    return {**rows[0], "results": results}
 
 
 @app.get("/api/case/{case_id}/tool-runs")
 async def get_tool_runs(case_id: str):
-    require_db(); return supabase_client.table("tool_runs").select("*").eq("case_id", case_id).order("created_at").execute().data
+    require_db()
+    return supabase_client.table("tool_runs").select("*").eq("case_id", case_id).order("created_at").execute().data
 
 
 @app.get("/api/investigations")
 async def investigations():
-    require_db(); return supabase_client.table("investigations").select("*").order("created_at", desc=True).execute().data
+    require_db()
+    return supabase_client.table("investigations").select("*").order("created_at", desc=True).execute().data
 
 
 @app.get("/api/audit", dependencies=[Depends(require_admin)])
 async def audit(limit: int = Query(100, le=500)):
-    require_db(); return supabase_client.table("audit_logs").select("*").order("created_at", desc=True).limit(limit).execute().data
+    require_db()
+    return supabase_client.table("audit_logs").select("*").order("created_at", desc=True).limit(limit).execute().data
 
 
 @app.websocket("/ws/progress/{case_id}")
 async def case_progress(websocket: WebSocket, case_id: str):
-    await websocket.accept(); pubsub = redis_client.pubsub(); await pubsub.subscribe(f"case:{case_id}")
+    await websocket.accept()
+    pubsub = redis_client.pubsub()
+    await pubsub.subscribe(f"case:{case_id}")
     try:
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
-            if message and message.get("type") == "message": await websocket.send_text(message["data"])
+            if message and message.get("type") == "message":
+                await websocket.send_text(message["data"])
             await asyncio.sleep(0.25)
-    except WebSocketDisconnect: pass
+    except WebSocketDisconnect:
+        pass
     finally:
-        await pubsub.unsubscribe(f"case:{case_id}"); await pubsub.close()
+        await pubsub.unsubscribe(f"case:{case_id}")
+        await pubsub.close()
